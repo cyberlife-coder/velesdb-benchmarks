@@ -1,0 +1,8 @@
+velesdb
+clickhouse-connect>=0.7.0
+numpy
+h5py
+qdrant-client
+neo4j
+igraph
+maturin

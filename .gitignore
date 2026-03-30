@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv*/
+*.egg-info/
+
+# Data files (too large for git)
+*.hdf5
+*.parquet
+*.h5
+
+# ClickHouse artifacts
+access/
+preprocessed_configs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Temp
+*.log
+*.tmp

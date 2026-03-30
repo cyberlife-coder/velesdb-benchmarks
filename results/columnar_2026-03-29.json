@@ -1,0 +1,268 @@
+{
+  "machine": {
+    "cpu": "unknown",
+    "ram": "unknown",
+    "os": "Linux-5.15.167.4-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "velesdb": "1.10.0",
+    "date": "2026-03-29",
+    "clickhouse": "26.3.2.3"
+  },
+  "config": {
+    "dimension": 128,
+    "top_k": 100,
+    "warmup_rounds": 20,
+    "measure_rounds": 100
+  },
+  "results": [
+    {
+      "dataset_size": 10000,
+      "operations": {
+        "filter_3pred_project_4col": {
+          "description": "WHERE category='tech' AND price>100 AND stock<50 \u2192 project 4 cols",
+          "clickhouse": {
+            "mean": 0.0032725559515529314,
+            "median": 0.0031787440020707436,
+            "p99": 0.004207296492095344,
+            "min": 0.002895904006436467,
+            "max": 0.005283573002088815,
+            "stdev": 0.0003260342938785936,
+            "rounds": 100
+          },
+          "velesdb": {
+            "mean": 0.0002740337001159787,
+            "median": 0.0002575055041234009,
+            "p99": 0.0003864208373124713,
+            "min": 0.00023539000540040433,
+            "max": 0.0004221440030960366,
+            "stdev": 4.061965366739115e-05,
+            "rounds": 100
+          },
+          "ch_result_count": 305,
+          "veles_result_count": 100
+        },
+        "filter_nested_and_or": {
+          "description": "category IN (tech,science) AND price 50..500 AND rating>=3.5 \u2192 5 cols",
+          "clickhouse": {
+            "mean": 0.003734264039376285,
+            "median": 0.0037180550061748363,
+            "p99": 0.0045626718479616106,
+            "min": 0.0032007020054152235,
+            "max": 0.004699968994827941,
+            "stdev": 0.0002894990306007144,
+            "rounds": 100
+          },
+          "velesdb": {
+            "mean": 0.0002815465093590319,
+            "median": 0.0002702679921640083,
+            "p99": 0.00046228083287132955,
+            "min": 0.00024177398881874979,
+            "max": 0.00056096600019373,
+            "stdev": 4.7729599023773194e-05,
+            "rounds": 100
+          },
+          "ch_result_count": 406,
+          "veles_result_count": 100
+        },
+        "filter_1pred_project_all": {
+          "description": "WHERE region='eu-west' LIMIT 100 \u2192 all columns",
+          "clickhouse": {
+            "mean": 0.0032453482388518752,
+            "median": 0.003233273993828334,
+            "p99": 0.003937540469923988,
+            "min": 0.002775816014036536,
+            "max": 0.003973326995037496,
+            "stdev": 0.00028566374300676415,
+            "rounds": 100
+          },
+          "velesdb": {
+            "mean": 0.0002990839302947279,
+            "median": 0.0002733625005930662,
+            "p99": 0.0005394815842737449,
+            "min": 0.00024268298875540495,
+            "max": 0.0006438849959522486,
+            "stdev": 7.3752917742859e-05,
+            "rounds": 100
+          },
+          "ch_result_count": 100,
+          "veles_result_count": 100
+        },
+        "aggregation_group_by": {
+          "description": "GROUP BY category \u2192 count, avg(price) [CH: full table / VelesDB: top-K]",
+          "clickhouse": {
+            "mean": 0.0037550883894436993,
+            "median": 0.003722605499206111,
+            "p99": 0.004684333561890527,
+            "min": 0.0031387130002258345,
+            "max": 0.004960104008205235,
+            "stdev": 0.00031134745885243344,
+            "rounds": 100
+          },
+          "velesdb": {
+            "mean": 0.00025982198989368046,
+            "median": 0.0002411800014670007,
+            "p99": 0.00046613656799309036,
+            "min": 0.000225013995077461,
+            "max": 0.0006240969960344955,
+            "stdev": 5.6915617080601766e-05,
+            "rounds": 100
+          },
+          "note": "Not directly comparable: CH aggregates full table, VelesDB aggregates top-K results"
+        },
+        "vector_search_payload": {
+          "description": "Top-100 retrieval + 4-col projection [VelesDB: vector HNSW / CH: ORDER BY]",
+          "clickhouse": {
+            "mean": 0.0028860787898884153,
+            "median": 0.002825354997185059,
+            "p99": 0.0038550673577992726,
+            "min": 0.0024388400051975623,
+            "max": 0.004106067994143814,
+            "stdev": 0.00028410289570039607,
+            "rounds": 100
+          },
+          "velesdb": {
+            "mean": 0.00026902163110207765,
+            "median": 0.00025578450004104525,
+            "p99": 0.00045133640567655766,
+            "min": 0.0002236360014649108,
+            "max": 0.0006315570062724873,
+            "stdev": 5.3103956295497464e-05,
+            "rounds": 100
+          },
+          "note": "Different ranking strategies \u2014 shows retrieval + projection overhead"
+        }
+      },
+      "load_times": {
+        "clickhouse": 0.13618169599794783,
+        "velesdb": 0.3448500209924532
+      }
+    },
+    {
+      "dataset_size": 100000,
+      "operations": {
+        "filter_3pred_project_4col": {
+          "description": "WHERE category='tech' AND price>100 AND stock<50 \u2192 project 4 cols",
+          "clickhouse": {
+            "mean": 0.006620834229543107,
+            "median": 0.006624529494729359,
+            "p99": 0.007933192373020577,
+            "min": 0.005799387989100069,
+            "max": 0.008331208999152295,
+            "stdev": 0.0004282050070345295,
+            "rounds": 100
+          },
+          "velesdb": {
+            "mean": 0.00035325612989254294,
+            "median": 0.0003404455055715516,
+            "p99": 0.0005135479193995708,
+            "min": 0.0003062719915760681,
+            "max": 0.000536904000909999,
+            "stdev": 4.750215286456413e-05,
+            "rounds": 100
+          },
+          "ch_result_count": 2867,
+          "veles_result_count": 100
+        },
+        "filter_nested_and_or": {
+          "description": "category IN (tech,science) AND price 50..500 AND rating>=3.5 \u2192 5 cols",
+          "clickhouse": {
+            "mean": 0.007036505980941001,
+            "median": 0.006977920995268505,
+            "p99": 0.007917651083989768,
+            "min": 0.00645653301035054,
+            "max": 0.008080711995717138,
+            "stdev": 0.0003169822151505328,
+            "rounds": 100
+          },
+          "velesdb": {
+            "mean": 0.000320898809004575,
+            "median": 0.0003145099908579141,
+            "p99": 0.0004203543654875833,
+            "min": 0.000282591994618997,
+            "max": 0.0004784049961017445,
+            "stdev": 3.1762270418963255e-05,
+            "rounds": 100
+          },
+          "ch_result_count": 4312,
+          "veles_result_count": 100
+        },
+        "filter_1pred_project_all": {
+          "description": "WHERE region='eu-west' LIMIT 100 \u2192 all columns",
+          "clickhouse": {
+            "mean": 0.003948649230296724,
+            "median": 0.003912179498001933,
+            "p99": 0.004590556512557669,
+            "min": 0.003435705992160365,
+            "max": 0.0046151589922374114,
+            "stdev": 0.00028326635011157846,
+            "rounds": 100
+          },
+          "velesdb": {
+            "mean": 0.00032191239952226167,
+            "median": 0.0003007299965247512,
+            "p99": 0.0006217532775190195,
+            "min": 0.00028172400197945535,
+            "max": 0.0006692999886581674,
+            "stdev": 6.368360021190416e-05,
+            "rounds": 100
+          },
+          "ch_result_count": 100,
+          "veles_result_count": 100
+        },
+        "aggregation_group_by": {
+          "description": "GROUP BY category \u2192 count, avg(price) [CH: full table / VelesDB: top-K]",
+          "clickhouse": {
+            "mean": 0.004617355740629136,
+            "median": 0.004536854503385257,
+            "p99": 0.005553917280485626,
+            "min": 0.004025590009405278,
+            "max": 0.006700167010421865,
+            "stdev": 0.0003883606479736041,
+            "rounds": 100
+          },
+          "velesdb": {
+            "mean": 0.000317412129661534,
+            "median": 0.0002974360031657852,
+            "p99": 0.0005475585884414625,
+            "min": 0.0002677160082384944,
+            "max": 0.0007790789968566969,
+            "stdev": 6.697433916401556e-05,
+            "rounds": 100
+          },
+          "note": "Not directly comparable: CH aggregates full table, VelesDB aggregates top-K results"
+        },
+        "vector_search_payload": {
+          "description": "Top-100 retrieval + 4-col projection [VelesDB: vector HNSW / CH: ORDER BY]",
+          "clickhouse": {
+            "mean": 0.005053382760379464,
+            "median": 0.005040528500103392,
+            "p99": 0.0059194040404690895,
+            "min": 0.004481988988118246,
+            "max": 0.005967224991763942,
+            "stdev": 0.0003322348177126193,
+            "rounds": 100
+          },
+          "velesdb": {
+            "mean": 0.00030048904998693617,
+            "median": 0.00029046699637547135,
+            "p99": 0.0004163970686204267,
+            "min": 0.0002668090019142255,
+            "max": 0.0004405590007081628,
+            "stdev": 3.502013238484844e-05,
+            "rounds": 100
+          },
+          "note": "Different ranking strategies \u2014 shows retrieval + projection overhead"
+        }
+      },
+      "load_times": {
+        "clickhouse": 1.2248083080048673,
+        "velesdb": 3.0451852929982124
+      }
+    }
+  ]
+}
+
+  Done.
+
+=== Stopping ClickHouse ===
+  Done.
