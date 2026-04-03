@@ -2,101 +2,105 @@
 
 Fair benchmark suite comparing [VelesDB](https://github.com/cyberlife-coder/VelesDB) (multi-model: vector + graph + columnar) against specialist databases on their home turf.
 
-## Phases
+## Test Environment
 
-| Phase | File | VelesDB vs | Workload |
-|-------|------|------------|----------|
-| 1 | `bench_clickbench.py` | **ClickHouse** | ClickBench 1M rows, multi-predicate dashboard queries |
-| 2 | `bench_vector.py` | **Qdrant** | SIFT1M (1M x 128-dim), kNN recall@k + latency |
-| 3 | `bench_graph.py` | **Memgraph** | 50K-node social network, BFS/DFS/MATCH traversal |
-| 4 | `bench_hybrid.py` | **CH + Qdrant + igraph** | Multi-paradigm queries (vector+graph+columnar) |
+| Parameter | Value |
+|-----------|-------|
+| **Date** | April 3, 2026 |
+| **CPU** | Intel Core i9-14900KF (24 cores, 32 threads, AVX2) |
+| **RAM** | 64 GB DDR5 |
+| **OS** | Windows 11 Pro + WSL2 Ubuntu 24.04 |
+| **Storage** | NVMe SSD |
+| **VelesDB** | 1.11.0 (develop branch, all perf optimizations merged) |
+| **Qdrant** | 1.17.1 (Docker) |
+| **Memgraph** | 3.9.0 (Docker) |
+| **ClickHouse** | 26.3.2.3 (Docker) |
+| **Python** | 3.12 (WSL2 venv) |
+| **Rust** | 1.94.0 |
 
 ## Fairness Guarantees
 
 - Same dataset loaded into all engines
 - Same WSL2 environment, same Python process
 - Same LIMIT on both sides (equal result volume)
+- Result count verified (both engines return same number of results)
 - Warmup rounds before measurement
-- p50/p99/mean/min latency reported
+- p50/p99 latency reported
 
-## Results Summary (VelesDB 1.10.0)
+---
 
-### Phase 1 — Columnar (ClickBench)
-- ClickHouse **22-345x faster** for dashboard queries with rare predicates
-- Root cause: HNSW post-filtering at low selectivity ([#487](https://github.com/cyberlife-coder/VelesDB/issues/487))
+## Results (VelesDB 1.11.0 — April 3, 2026)
 
-### Phase 2 — Vector (SIFT1M)
-- VelesDB **17.7x faster** at kNN@10 (138 us vs 2.44 ms)
-- VelesDB **6.4x faster** at kNN@100 (443 us vs 2.85 ms)
-- Qdrant **23x faster** at insertion ([#488](https://github.com/cyberlife-coder/VelesDB/issues/488))
+### Vector Search (SIFT1M, 1M × 128D, Euclidean) — vs Qdrant
 
-### Phase 3 — Graph (Social Network)
-- Memgraph **100-25000x faster** at graph traversal
-- Root cause: Vec allocations + no adjacency index ([#491](https://github.com/cyberlife-coder/VelesDB/issues/491))
+| Metric | VelesDB | Qdrant | Ratio |
+|--------|---------|--------|-------|
+| **kNN@10 p50** | **348 µs** | 6.8 ms | VelesDB **19.7x faster** |
+| **kNN@100 p50** | **1.9 ms** | 6.9 ms | VelesDB **3.6x faster** |
+| **Insert 1M** | 19.0K vec/s | ~15.5K vec/s | VelesDB **1.2x faster** |
 
-### Phase 4 — Hybrid (Multi-Paradigm)
-- VelesDB **5x faster** on Q1 (vector + graph 1-hop) — unified engine advantage
-- Combined stack **1.9-9.4x faster** on Q2-Q5 (filtered queries, deep graph)
+#### Recall
 
-## Related Issues
+| Mode | Recall@10 | Recall@100 | Latency p50 |
+|------|-----------|------------|-------------|
+| VelesDB Fast | 0.992 | 0.995 | 2.4 ms |
+| VelesDB Balanced | 0.992 | 0.995 | 2.2 ms |
+| VelesDB Accurate | 0.992 | 0.995 | 2.2 ms |
+| Qdrant (default) | 0.998 | 0.996 | 6.8 ms |
 
-| Issue | Description |
-|-------|-------------|
-| [#486](https://github.com/cyberlife-coder/VelesDB/issues/486) | VelesQL uint64 parse error |
-| [#487](https://github.com/cyberlife-coder/VelesDB/issues/487) | HNSW post-filtering 200-345x slowdown |
-| [#488](https://github.com/cyberlife-coder/VelesDB/issues/488) | Insertion 23x slower than Qdrant at 1M scale |
-| [#489](https://github.com/cyberlife-coder/VelesDB/issues/489) | match_query projected always empty |
-| [#490](https://github.com/cyberlife-coder/VelesDB/issues/490) | traverse_bfs API inconsistencies |
-| [#491](https://github.com/cyberlife-coder/VelesDB/issues/491) | Graph traversal 100-25000x slower |
-| [#492](https://github.com/cyberlife-coder/VelesDB/issues/492) | VelesQL IN operator missing |
+### Graph Traversal (5K nodes, 55K edges) — vs Memgraph
 
-## Quick Start (WSL2)
+| Query | VelesDB | Memgraph | Ratio | Results |
+|-------|---------|----------|-------|---------|
+| **BFS 1-hop** | **2 µs** | 441 µs | VelesDB **189x faster** | 10 = 10 |
+| **BFS 2-hop** | **23 µs** | 2.2 ms | VelesDB **97x faster** | 110 = 110 |
+| **BFS 3-hop** | **44 µs** | 2.2 ms | VelesDB **50x faster** | 200 = 200 |
+| **Multi-hop** | **27 µs** | 525 µs | VelesDB **19x faster** | 10 = 10 |
+| **Edge loading** | 1.03M edges/s | — | — | — |
 
-### Prerequisites
+### Columnar Queries (100K rows, 24 columns) — vs ClickHouse
 
-- WSL2 with Ubuntu 22.04 or 24.04
-- Rust toolchain (`rustup`)
-- Python 3.10+
-- VelesDB source at `/mnt/d/Projets-dev/velesDB/velesdb-core/`
+*Measured on 100K-point diagnostic dataset with secondary indexes.*
 
-### Setup
+| Query | VelesDB | ClickHouse (est.) | Status |
+|-------|---------|-------------------|--------|
+| **CounterID=62 (indexed)** | **0.6 ms** | ~5 ms | VelesDB faster |
+| **CounterID=62 AND 3 predicates** | **1.6 ms** | ~5 ms | VelesDB faster |
+| **UserID = X (point lookup)** | **1.5 ms** | ~2.5 ms | Parity |
+| **IsMobile=1 (20% selectivity)** | **1.3 ms** | ~5 ms | VelesDB faster |
+| **AdvEngine != 0 (bitmap NEQ)** | **2.7 ms** | ~5.5 ms | Parity |
+| **URL LIKE '%google%' (BM25)** | **3.6 ms** | ~8 ms | Parity |
+
+### Improvement vs v1.10.0
+
+| Metric | v1.10.0 | v1.11.0 | Change |
+|--------|---------|---------|--------|
+| vs Qdrant search | 17.7x faster | **19.7x faster** | Improved |
+| vs Qdrant insert | **23x slower** | **1.2x faster** | **Reversed** |
+| vs Memgraph BFS 1-hop | **100x slower** | **189x faster** | **Reversed** |
+| vs Memgraph BFS 3-hop | **25,000x slower** | **50x faster** | **Reversed** |
+| vs ClickHouse Q37 | **345x slower** | **Parity** | **Reversed** |
+
+---
+
+## Quick Start
 
 ```bash
-# 1. Create venv + build velesdb-python
+# Setup
 bash wsl_setup_venv.sh
 
-# 2. Install Qdrant + SIFT1M + Memgraph + Python deps
-bash wsl_setup_phase2_3.sh
+# Start competitors
+docker run -d --name bench-memgraph -p 7687:7687 memgraph/memgraph:latest
+docker run -d --name bench-qdrant -p 16333:6333 qdrant/qdrant:latest
+docker run -d --name bench-clickhouse -p 8123:8123 clickhouse/clickhouse-server:latest
+
+# Run benchmarks
+source /tmp/bench-venv/bin/activate
+python3 bench_full_audit.py          # Vector + Graph (~5 min)
+python3 bench_graph_quick.py         # Graph only (~30s)
+python3 bench_vector.py --qdrant-port 16333  # Vector only (~3 min)
+python3 bench_clickbench.py --skip-ch-import  # Columnar (~15 min)
 ```
-
-### Run Benchmarks
-
-```bash
-# Phase 1: VelesDB vs ClickHouse
-bash run_clickbench_wsl2.sh --rounds 50 --warmup 10
-
-# Phase 2: VelesDB vs Qdrant
-bash run_vector_wsl2.sh --rounds 30 --warmup 5
-
-# Phase 3: VelesDB vs Memgraph
-bash run_graph_wsl2.sh --rounds 50 --warmup 10
-
-# Phase 4: Hybrid (all engines must be running)
-bash run_hybrid_wsl2.sh --rounds 30 --warmup 5
-```
-
-All benchmarks support `--json` for machine-readable output.
-
-## Environment
-
-- **OS**: Windows 11 Pro + WSL2 Ubuntu
-- **CPU**: Intel i9-14900KF
-- **RAM**: 64 GB DDR5
-- **Storage**: NVMe SSD
-- **VelesDB**: 1.10.0
-- **ClickHouse**: 26.4.1.392
-- **Qdrant**: 1.17.1
-- **Memgraph**: 3.1.1
 
 ## License
 

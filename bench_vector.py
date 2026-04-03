@@ -189,14 +189,20 @@ def setup_velesdb(vectors: np.ndarray, db_path: str):
 
     total = len(vectors)
     t0 = time.perf_counter()
+    # Use numpy fast path when available (77x faster than dict path)
     for start in range(0, total, BATCH_SIZE):
         end = min(start + BATCH_SIZE, total)
-        batch = vectors[start:end]
-        points = [
-            {"id": int(start + i), "vector": batch[i].tolist()}
-            for i in range(len(batch))
-        ]
-        collection.upsert(points)
+        batch = vectors[start:end].astype(np.float32)
+        ids = list(range(start, end))
+        try:
+            collection._inner.upsert_bulk_numpy(batch, ids)
+        except (AttributeError, TypeError):
+            # Fallback to dict path for older versions
+            points = [
+                {"id": int(start + i), "vector": batch[i].tolist()}
+                for i in range(len(batch))
+            ]
+            collection.upsert(points)
         if (end % 100000 == 0) or end >= total:
             print(f"    VelesDB: {end:,}/{total:,}")
     load_time = time.perf_counter() - t0

@@ -1,0 +1,63 @@
+{
+  "date": "2026-04-03",
+  "velesdb_version": "1.11.0",
+  "environment": {
+    "cpu": "Intel Core i9-14900KF (24C/32T, AVX2)",
+    "ram": "64 GB DDR5",
+    "os": "Windows 11 Pro + WSL2 Ubuntu 24.04",
+    "storage": "NVMe SSD",
+    "rust": "1.94.0",
+    "python": "3.12"
+  },
+  "competitors": {
+    "qdrant": "1.17.1",
+    "memgraph": "3.9.0",
+    "clickhouse": "26.3.2.3"
+  },
+  "vector_search": {
+    "dataset": "SIFT1M (1M x 128D, Euclidean)",
+    "queries": 200,
+    "results": {
+      "knn_10": {"velesdb_p50_us": 348, "qdrant_p50_us": 6800, "ratio": 19.7, "winner": "velesdb"},
+      "knn_100": {"velesdb_p50_us": 1900, "qdrant_p50_us": 6900, "ratio": 3.6, "winner": "velesdb"}
+    },
+    "insert_1m": {"velesdb_vec_per_sec": 18984, "qdrant_vec_per_sec": 15500, "ratio": 1.2, "winner": "velesdb"},
+    "recall": {
+      "velesdb_fast": {"recall_10": 0.992, "recall_100": 0.995, "latency_p50_ms": 2.4},
+      "velesdb_balanced": {"recall_10": 0.992, "recall_100": 0.995, "latency_p50_ms": 2.2},
+      "velesdb_accurate": {"recall_10": 0.992, "recall_100": 0.995, "latency_p50_ms": 2.2},
+      "qdrant_default": {"recall_10": 0.998, "recall_100": 0.996}
+    }
+  },
+  "graph_traversal": {
+    "dataset": "5K persons, 100 companies, 55K edges (LDBC-style)",
+    "results": {
+      "bfs_1hop": {"velesdb_p50_us": 2, "memgraph_p50_us": 441, "ratio": 189, "results_count": 10},
+      "bfs_2hop": {"velesdb_p50_us": 23, "memgraph_p50_us": 2200, "ratio": 97, "results_count": 110},
+      "bfs_3hop": {"velesdb_p50_us": 44, "memgraph_p50_us": 2200, "ratio": 50, "results_count": 200},
+      "multi_hop": {"velesdb_p50_us": 27, "memgraph_p50_us": 525, "ratio": 19, "results_count": 10}
+    },
+    "edge_loading": {"velesdb_edges_per_sec": 1027053}
+  },
+  "columnar": {
+    "dataset": "ClickBench hits (1M rows, 24 payload columns)",
+    "clickhouse_version": "26.3.2.3",
+    "results": {
+      "Q37_dashboard": {"vdb_p50_ms": 5.3, "ch_p50_ms": 5.4, "ratio": 1.0, "winner": "parity"},
+      "Q38_dashboard": {"vdb_p50_ms": 5.8, "ch_p50_ms": 4.9, "ratio": 1.2, "winner": "clickhouse"},
+      "Q41_traffic": {"vdb_p50_ms": 5.3, "ch_p50_ms": 4.5, "ratio": 1.2, "winner": "clickhouse"},
+      "Q21_like": {"vdb_p50_ms": 38.6, "ch_p50_ms": 8.3, "ratio": 4.6, "winner": "clickhouse", "note": "BM25 returns 3 vs 98 results"},
+      "Q39_links": {"vdb_p50_ms": 21.0, "ch_p50_ms": 4.8, "ratio": 4.4, "winner": "clickhouse"},
+      "Qx_mobile": {"vdb_p50_ms": 15.9, "ch_p50_ms": 5.1, "ratio": 3.1, "winner": "clickhouse"},
+      "Q20_lookup": {"vdb_p50_ms": 4200, "ch_p50_ms": 2.6, "ratio": 1616, "winner": "clickhouse", "note": "full scan, no hash index"}
+    }
+  },
+  "improvement_vs_v1100": {
+    "vector_search": "17.7x → 19.7x faster (improved)",
+    "vector_insert": "23x slower → 1.2x faster (reversed)",
+    "graph_bfs_1hop": "100x slower → 189x faster (reversed)",
+    "graph_bfs_3hop": "25000x slower → 50x faster (reversed)",
+    "columnar_q37": "345x slower → parity (reversed)",
+    "columnar_q39": "200x slower → 4.4x slower (45x improved)"
+  }
+}

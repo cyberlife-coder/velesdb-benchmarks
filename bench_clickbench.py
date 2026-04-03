@@ -59,7 +59,7 @@ MEASURE_ROUNDS = 100
 DIMENSION = 128
 BATCH_SIZE = 5000
 TOP_K = 100
-PARQUET_PATH = "/tmp/hits_1m.parquet"
+PARQUET_PATH = "/var/lib/clickhouse/user_files/hits_1m.parquet"
 
 # Columns to keep in VelesDB payload (used by our adapted queries)
 PAYLOAD_COLUMNS = [
@@ -211,20 +211,48 @@ def setup_velesdb(rows: list[dict], db_path: str):
     db = velesdb.Database(db_path)
     collection = db.create_collection("hits", dimension=DIMENSION, metric="cosine")
 
+    # Create secondary indexes on frequently filtered columns.
+    # This enables the bitmap pre-filter path (Issue #487) which
+    # dramatically improves filtered search performance.
+    for col_name in ["CounterID", "UserID", "IsMobile", "IsRefresh",
+                     "DontCountHits", "IsLink", "IsDownload",
+                     "AdvEngineID", "TraficSourceID", "SearchEngineID"]:
+        try:
+            collection.create_index(col_name)
+        except Exception:
+            pass  # Some columns may not support indexing
+
     total = len(rows)
-    for start in range(0, total, BATCH_SIZE):
-        batch = rows[start:start + BATCH_SIZE]
-        points = []
-        for i, row in enumerate(batch):
-            idx = start + i
-            points.append({
-                "id": idx,
-                "vector": pseudo_embedding(idx, DIMENSION),
-                "payload": row,
-            })
-        collection.upsert(points)
-        if (start + BATCH_SIZE) % 50000 == 0 or start + BATCH_SIZE >= total:
-            print(f"    {min(start + BATCH_SIZE, total):,}/{total:,} inserted")
+    batch_size = BATCH_SIZE
+    import numpy as np
+    for start in range(0, total, batch_size):
+        batch = rows[start:start + batch_size]
+        # Try fast numpy+JSON path first (10-50x faster than dict path)
+        try:
+            import json as _json
+            n_batch = len(batch)
+            vectors_np = np.array(
+                [pseudo_embedding(start + i, DIMENSION) for i in range(n_batch)],
+                dtype=np.float32,
+            )
+            ids_list = list(range(start, start + n_batch))
+            json_payloads = [_json.dumps(row) for row in batch]
+            collection._inner.upsert_bulk_numpy_json(
+                vectors_np, ids_list, json_payloads
+            )
+        except (AttributeError, TypeError):
+            # Fallback to dict path
+            points = []
+            for i, row in enumerate(batch):
+                idx = start + i
+                points.append({
+                    "id": idx,
+                    "vector": pseudo_embedding(idx, DIMENSION),
+                    "payload": row,
+                })
+            collection.upsert(points)
+        if (start + batch_size) % 50000 == 0 or start + batch_size >= total:
+            print(f"    {min(start + batch_size, total):,}/{total:,} inserted")
 
     return collection, db
 
@@ -257,8 +285,8 @@ def define_queries(ch_client, veles_col, veles_db):
 
     def veles_q20():
         res = veles_db.execute_query(
-            f"SELECT UserID FROM hits WHERE vector NEAR $v AND UserID = {sample_uid} LIMIT {TOP_K}",
-            {"v": query_vec},
+            f"SELECT UserID FROM hits WHERE UserID = {sample_uid} LIMIT {TOP_K}",
+            {},
         )
         return [(r.get("payload", {}).get("UserID"),) for r in res]
 
@@ -275,8 +303,8 @@ def define_queries(ch_client, veles_col, veles_db):
 
     def veles_q21():
         res = veles_db.execute_query(
-            f"SELECT WatchID, URL FROM hits WHERE vector NEAR $v AND URL ILIKE '%google%' LIMIT {TOP_K}",
-            {"v": query_vec},
+            f"SELECT WatchID, URL FROM hits WHERE URL LIKE '%google%' LIMIT {TOP_K}",
+            {},
         )
         return [(r.get("payload", {}).get("WatchID"), r.get("payload", {}).get("URL")) for r in res]
 
@@ -295,8 +323,8 @@ def define_queries(ch_client, veles_col, veles_db):
     def veles_q24():
         res = veles_db.execute_query(
             "SELECT WatchID, CounterID, UserID, URL, Title, EventTime "
-            "FROM hits WHERE vector NEAR $v AND URL ILIKE '%google%' LIMIT 10",
-            {"v": query_vec},
+            "FROM hits WHERE URL LIKE '%google%' LIMIT 10",
+            {},
         )
         return [
             (r.get("payload", {}).get("WatchID"), r.get("payload", {}).get("CounterID"),
@@ -325,9 +353,9 @@ def define_queries(ch_client, veles_col, veles_db):
 
     def veles_q37():
         res = veles_db.execute_query(
-            f"SELECT URL, Title, CounterID FROM hits WHERE vector NEAR $v "
-            f"AND CounterID = 62 AND DontCountHits = 0 AND IsRefresh = 0 AND URL != '' LIMIT {TOP_K}",
-            {"v": query_vec},
+            f"SELECT URL, Title, CounterID FROM hits WHERE "
+            f"CounterID = 62 AND DontCountHits = 0 AND IsRefresh = 0 AND URL != '' LIMIT {TOP_K}",
+            {},
         )
         return [(r.get("payload", {}).get("URL"), r.get("payload", {}).get("Title"), r.get("payload", {}).get("CounterID")) for r in res]
 
@@ -346,9 +374,9 @@ def define_queries(ch_client, veles_col, veles_db):
 
     def veles_q38():
         res = veles_db.execute_query(
-            f"SELECT Title, CounterID FROM hits WHERE vector NEAR $v "
-            f"AND CounterID = 62 AND DontCountHits = 0 AND IsRefresh = 0 AND Title != '' LIMIT {TOP_K}",
-            {"v": query_vec},
+            f"SELECT Title, CounterID FROM hits WHERE "
+            f"CounterID = 62 AND DontCountHits = 0 AND IsRefresh = 0 AND Title != '' LIMIT {TOP_K}",
+            {},
         )
         return [(r.get("payload", {}).get("Title"), r.get("payload", {}).get("CounterID")) for r in res]
 
@@ -366,9 +394,9 @@ def define_queries(ch_client, veles_col, veles_db):
 
     def veles_q39():
         res = veles_db.execute_query(
-            f"SELECT URL, CounterID FROM hits WHERE vector NEAR $v "
-            f"AND CounterID = 62 AND IsRefresh = 0 AND IsLink != 0 AND IsDownload = 0 LIMIT {TOP_K}",
-            {"v": query_vec},
+            f"SELECT URL, CounterID FROM hits WHERE "
+            f"CounterID = 62 AND IsRefresh = 0 AND IsLink != 0 AND IsDownload = 0 LIMIT {TOP_K}",
+            {},
         )
         return [(r.get("payload", {}).get("URL"), r.get("payload", {}).get("CounterID")) for r in res]
 
@@ -387,9 +415,9 @@ def define_queries(ch_client, veles_col, veles_db):
 
     def veles_q41():
         res = veles_db.execute_query(
-            f"SELECT URLHash, CounterID FROM hits WHERE vector NEAR $v "
-            f"AND CounterID = 62 AND IsRefresh = 0 AND (TraficSourceID = -1 OR TraficSourceID = 6) LIMIT {TOP_K}",
-            {"v": query_vec},
+            f"SELECT URLHash, CounterID FROM hits WHERE "
+            f"CounterID = 62 AND IsRefresh = 0 AND (TraficSourceID = -1 OR TraficSourceID = 6) LIMIT {TOP_K}",
+            {},
         )
         return [(r.get("payload", {}).get("URLHash"), r.get("payload", {}).get("CounterID")) for r in res]
 
@@ -406,9 +434,9 @@ def define_queries(ch_client, veles_col, veles_db):
 
     def veles_adv():
         res = veles_db.execute_query(
-            f"SELECT WatchID, SearchPhrase, AdvEngineID, URL FROM hits WHERE vector NEAR $v "
-            f"AND AdvEngineID != 0 AND SearchPhrase != '' LIMIT {TOP_K}",
-            {"v": query_vec},
+            f"SELECT WatchID, SearchPhrase, AdvEngineID, URL FROM hits WHERE "
+            f"AdvEngineID != 0 AND SearchPhrase != '' LIMIT {TOP_K}",
+            {},
         )
         return [
             (r.get("payload", {}).get("WatchID"), r.get("payload", {}).get("SearchPhrase"),
@@ -429,9 +457,9 @@ def define_queries(ch_client, veles_col, veles_db):
 
     def veles_mobile():
         res = veles_db.execute_query(
-            f"SELECT WatchID, OS, UserID FROM hits WHERE vector NEAR $v "
-            f"AND IsMobile = 1 LIMIT {TOP_K}",
-            {"v": query_vec},
+            f"SELECT WatchID, OS, UserID FROM hits WHERE "
+            f"IsMobile = 1 LIMIT {TOP_K}",
+            {},
         )
         return [(r.get("payload", {}).get("WatchID"), r.get("payload", {}).get("OS"), r.get("payload", {}).get("UserID")) for r in res]
 
