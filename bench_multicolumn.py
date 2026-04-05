@@ -3,58 +3,28 @@
 VelesDB vs ClickHouse — Multi-column Benchmark
 ================================================
 
-Compares multi-column filter + projection performance between:
-  - VelesDB (vector DB with structured payload filtering)
-  - ClickHouse (columnar OLAP engine)
-
-Both engines are tested from Python with identical timing methodology.
-
-Prerequisites:
-    docker compose up -d                     # Start ClickHouse
-    pip install -r requirements.txt          # Install deps
-    python bench_multicolumn.py              # Run benchmark
-
-    # Custom dataset sizes:
-    python bench_multicolumn.py --datasets 10000 100000 1000000
-
-    # JSON output:
-    python bench_multicolumn.py --json
+Compares multi-column filter + projection performance.
+Both engines run in Docker, accessed via HTTP.
 """
 
 import argparse
-import hashlib
 import json
 import math
 import os
 import platform
 import random
-import shutil
 import statistics
 import subprocess
 import sys
 import time
 
-# ---------------------------------------------------------------------------
-# Dependencies check
-# ---------------------------------------------------------------------------
-
-try:
-    import velesdb
-except ImportError:
-    print("ERROR: velesdb not installed. pip install velesdb")
-    sys.exit(1)
-
 try:
     import clickhouse_connect
 except ImportError:
-    print("ERROR: clickhouse-connect not installed. pip install clickhouse-connect")
+    print("ERROR: clickhouse-connect not installed")
     sys.exit(1)
 
-try:
-    import numpy as np
-except ImportError:
-    print("WARNING: numpy not installed, using pure Python vectors (slower generation)")
-    np = None
+from velesdb_client import VelesDBClient
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -66,14 +36,11 @@ TOP_K = 100
 WARMUP_ROUNDS = 10
 MEASURE_ROUNDS = 100
 DEFAULT_DATASETS = [10_000, 100_000]
-BATCH_SIZE = 5000
+BATCH_SIZE = 1000
 
 CATEGORIES = ["tech", "science", "business", "sports", "health", "music", "art", "food"]
 REGIONS = ["eu-west", "eu-east", "us-west", "us-east", "asia-pac",
            "latam", "africa", "mena", "oceania", "nordic"]
-
-CLICKHOUSE_HOST = "localhost"
-CLICKHOUSE_PORT = 8123
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -84,60 +51,20 @@ def pseudo_embedding(i: int, dim: int = DIMENSION) -> list:
     return [(math.sin(i * 0.01 + j * 0.01)) for j in range(dim)]
 
 
-def get_machine_info() -> dict:
-    info = {
-        "cpu": "unknown",
-        "ram": "unknown",
-        "os": platform.platform(),
-        "python": platform.python_version(),
-        "velesdb": velesdb.__version__,
-        "date": time.strftime("%Y-%m-%d"),
-    }
-    if platform.system() == "Windows":
-        try:
-            r = subprocess.check_output(
-                ["powershell", "-Command", "(Get-CimInstance Win32_Processor).Name"],
-                text=True, timeout=10,
-            ).strip()
-            if r:
-                info["cpu"] = r
-        except Exception:
-            pass
-        try:
-            r = subprocess.check_output(
-                ["powershell", "-Command",
-                 "[math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)"],
-                text=True, timeout=10,
-            ).strip()
-            if r:
-                info["ram"] = f"{r} GB"
-        except Exception:
-            pass
-    return info
-
-
 def percentile(data, p):
-    sorted_data = sorted(data)
-    k = (len(sorted_data) - 1) * (p / 100)
+    s = sorted(data)
+    k = (len(s) - 1) * (p / 100)
     f = int(k)
     c = f + 1
-    if c >= len(sorted_data):
-        return sorted_data[f]
-    return sorted_data[f] + (k - f) * (sorted_data[c] - sorted_data[f])
-
-
-def fmt_us(seconds: float) -> str:
-    return f"{seconds * 1_000_000:.0f} µs"
-
-
-def fmt_ms(seconds: float) -> str:
-    return f"{seconds * 1_000:.2f} ms"
+    if c >= len(s):
+        return s[f]
+    return s[f] + (k - f) * (s[c] - s[f])
 
 
 def fmt_time(seconds: float) -> str:
     if seconds < 0.001:
-        return fmt_us(seconds)
-    return fmt_ms(seconds)
+        return f"{seconds * 1_000_000:.0f} µs"
+    return f"{seconds * 1_000:.2f} ms"
 
 
 def measure(func, warmup=None, rounds=None) -> dict:
@@ -158,7 +85,6 @@ def measure(func, warmup=None, rounds=None) -> dict:
         "median": percentile(times, 50),
         "p99": percentile(times, 99),
         "min": min(times),
-        "max": max(times),
         "stdev": statistics.stdev(times) if len(times) > 1 else 0,
         "rounds": rounds,
         "result_sample": result,
@@ -195,26 +121,16 @@ def setup_clickhouse(client, rows: list[dict], table: str = "products"):
     client.command(f"DROP TABLE IF EXISTS {table}")
     client.command(f"""
         CREATE TABLE {table} (
-            id       UInt64,
-            category LowCardinality(String),
-            price    Float64,
-            stock    UInt32,
-            rating   Float32,
-            region   LowCardinality(String),
-            title    String
-        ) ENGINE = MergeTree()
-        ORDER BY id
+            id UInt64, category LowCardinality(String), price Float64,
+            stock UInt32, rating Float32, region LowCardinality(String), title String
+        ) ENGINE = MergeTree() ORDER BY id
     """)
-
-    # Batch insert
     col_names = ["id", "category", "price", "stock", "rating", "region", "title"]
-    for start in range(0, len(rows), BATCH_SIZE):
-        batch = rows[start:start + BATCH_SIZE]
+    for start in range(0, len(rows), 5000):
+        batch = rows[start:start + 5000]
         data = [[r[c] for c in col_names] for r in batch]
         client.insert(table, data, column_names=col_names)
-
-    count = client.command(f"SELECT count() FROM {table}")
-    return int(count)
+    return int(client.command(f"SELECT count() FROM {table}"))
 
 
 # ---------------------------------------------------------------------------
@@ -222,14 +138,10 @@ def setup_clickhouse(client, rows: list[dict], table: str = "products"):
 # ---------------------------------------------------------------------------
 
 
-def setup_velesdb(rows: list[dict], db_path: str) -> "velesdb.Collection":
-    if os.path.exists(db_path):
-        shutil.rmtree(db_path)
+def setup_velesdb(client: VelesDBClient, rows: list[dict], col_name: str = "products"):
+    client.delete_collection(col_name)
+    client.create_collection(col_name, dimension=DIMENSION, metric="cosine")
 
-    db = velesdb.Database(db_path)
-    collection = db.create_collection("products", dimension=DIMENSION, metric="cosine")
-
-    # Batch insert with embeddings
     for start in range(0, len(rows), BATCH_SIZE):
         batch = rows[start:start + BATCH_SIZE]
         points = []
@@ -238,17 +150,12 @@ def setup_velesdb(rows: list[dict], db_path: str) -> "velesdb.Collection":
                 "id": r["id"],
                 "vector": pseudo_embedding(r["id"], DIMENSION),
                 "payload": {
-                    "category": r["category"],
-                    "price": r["price"],
-                    "stock": r["stock"],
-                    "rating": r["rating"],
-                    "region": r["region"],
-                    "title": r["title"],
+                    "category": r["category"], "price": r["price"],
+                    "stock": r["stock"], "rating": r["rating"],
+                    "region": r["region"], "title": r["title"],
                 },
             })
-        collection.upsert(points)
-
-    return collection
+        client.upsert_points(col_name, points)
 
 
 # ---------------------------------------------------------------------------
@@ -256,108 +163,74 @@ def setup_velesdb(rows: list[dict], db_path: str) -> "velesdb.Collection":
 # ---------------------------------------------------------------------------
 
 
-def run_benchmarks(n: int, ch_client, veles_col) -> dict:
+def run_benchmarks(n: int, ch_client, veles: VelesDBClient, col_name: str) -> dict:
     query_vec = pseudo_embedding(9999, DIMENSION)
     results = {"dataset_size": n, "operations": {}}
 
-    # =====================================================================
-    # OP1: Multi-predicate filter + multi-column projection
-    #   "tech" category, price > 100, stock < 50
-    #   Project: category, price, title, rating
-    # =====================================================================
+    # OP1: 3-predicate filter + 4-col projection
     op_name = "filter_3pred_project_4col"
     print(f"    {op_name}...")
 
     def ch_op1():
         return ch_client.query(
-            "SELECT category, price, title, rating "
-            "FROM products "
+            "SELECT category, price, title, rating FROM products "
             "WHERE category = 'tech' AND price > 100 AND stock < 50"
         ).result_rows
 
     def veles_op1():
-        res = veles_col.search(
-            vector=query_vec,
-            top_k=TOP_K,
-            filter={
-                "condition": {
-                    "type": "and",
-                    "conditions": [
-                        {"type": "eq", "field": "category", "value": "tech"},
-                        {"type": "gt", "field": "price", "value": 100},
-                        {"type": "lt", "field": "stock", "value": 50},
-                    ],
-                }
-            },
-        )
-        # Project 4 columns from payload
-        return [
-            (r["payload"]["category"], r["payload"]["price"],
-             r["payload"]["title"], r["payload"]["rating"])
-            for r in res
-        ]
+        res = veles.search(col_name, vector=query_vec, top_k=TOP_K, filter={
+            "condition": {"type": "and", "conditions": [
+                {"type": "eq", "field": "category", "value": "tech"},
+                {"type": "gt", "field": "price", "value": 100},
+                {"type": "lt", "field": "stock", "value": 50},
+            ]}
+        })
+        return [(r["payload"]["category"], r["payload"]["price"],
+                 r["payload"]["title"], r["payload"]["rating"]) for r in res]
 
     ch_m = measure(ch_op1)
     veles_m = measure(veles_op1)
     results["operations"][op_name] = {
-        "description": "WHERE category='tech' AND price>100 AND stock<50 → project 4 cols",
+        "description": "WHERE category='tech' AND price>100 AND stock<50 → 4 cols",
         "clickhouse": {k: v for k, v in ch_m.items() if k != "result_sample"},
         "velesdb": {k: v for k, v in veles_m.items() if k != "result_sample"},
         "ch_result_count": len(ch_m["result_sample"]),
         "veles_result_count": len(veles_m["result_sample"]),
     }
 
-    # =====================================================================
-    # OP2: Complex nested filter (AND + OR + range)
-    #   (category IN [tech, science]) AND (price BETWEEN 50..500) AND (rating >= 3.5)
-    # =====================================================================
+    # OP2: Nested AND/OR filter
     op_name = "filter_nested_and_or"
     print(f"    {op_name}...")
 
     def ch_op2():
         return ch_client.query(
-            "SELECT id, category, price, rating, region "
-            "FROM products "
-            "WHERE category IN ('tech', 'science') "
-            "  AND price >= 50 AND price <= 500 "
-            "  AND rating >= 3.5"
+            "SELECT id, category, price, rating, region FROM products "
+            "WHERE category IN ('tech', 'science') AND price >= 50 AND price <= 500 AND rating >= 3.5"
         ).result_rows
 
     def veles_op2():
-        res = veles_col.search(
-            vector=query_vec,
-            top_k=TOP_K,
-            filter={
-                "condition": {
-                    "type": "and",
-                    "conditions": [
-                        {"type": "in", "field": "category", "values": ["tech", "science"]},
-                        {"type": "gte", "field": "price", "value": 50},
-                        {"type": "lte", "field": "price", "value": 500},
-                        {"type": "gte", "field": "rating", "value": 3.5},
-                    ],
-                }
-            },
-        )
-        return [
-            (r["id"], r["payload"]["category"], r["payload"]["price"],
-             r["payload"]["rating"], r["payload"]["region"])
-            for r in res
-        ]
+        res = veles.search(col_name, vector=query_vec, top_k=TOP_K, filter={
+            "condition": {"type": "and", "conditions": [
+                {"type": "in", "field": "category", "values": ["tech", "science"]},
+                {"type": "gte", "field": "price", "value": 50},
+                {"type": "lte", "field": "price", "value": 500},
+                {"type": "gte", "field": "rating", "value": 3.5},
+            ]}
+        })
+        return [(r["id"], r["payload"]["category"], r["payload"]["price"],
+                 r["payload"]["rating"], r["payload"]["region"]) for r in res]
 
     ch_m = measure(ch_op2)
     veles_m = measure(veles_op2)
     results["operations"][op_name] = {
-        "description": "category IN (tech,science) AND price 50..500 AND rating>=3.5 → 5 cols",
+        "description": "category IN (tech,science) AND price 50..500 AND rating>=3.5",
         "clickhouse": {k: v for k, v in ch_m.items() if k != "result_sample"},
         "velesdb": {k: v for k, v in veles_m.items() if k != "result_sample"},
         "ch_result_count": len(ch_m["result_sample"]),
         "veles_result_count": len(veles_m["result_sample"]),
     }
 
-    # =====================================================================
-    # OP3: Single predicate + full row projection (all columns)
-    # =====================================================================
+    # OP3: Single predicate + all columns
     op_name = "filter_1pred_project_all"
     print(f"    {op_name}...")
 
@@ -367,19 +240,12 @@ def run_benchmarks(n: int, ch_client, veles_col) -> dict:
         ).result_rows
 
     def veles_op3():
-        res = veles_col.search(
-            vector=query_vec,
-            top_k=TOP_K,
-            filter={
-                "condition": {"type": "eq", "field": "region", "value": "eu-west"}
-            },
-        )
-        return [
-            (r["id"], r["payload"]["category"], r["payload"]["price"],
-             r["payload"]["stock"], r["payload"]["rating"],
-             r["payload"]["region"], r["payload"]["title"])
-            for r in res
-        ]
+        res = veles.search(col_name, vector=query_vec, top_k=TOP_K, filter={
+            "condition": {"type": "eq", "field": "region", "value": "eu-west"}
+        })
+        return [(r["id"], r["payload"]["category"], r["payload"]["price"],
+                 r["payload"]["stock"], r["payload"]["rating"],
+                 r["payload"]["region"], r["payload"]["title"]) for r in res]
 
     ch_m = measure(ch_op3)
     veles_m = measure(veles_op3)
@@ -391,70 +257,27 @@ def run_benchmarks(n: int, ch_client, veles_col) -> dict:
         "veles_result_count": len(veles_m["result_sample"]),
     }
 
-    # =====================================================================
-    # OP4: Aggregation — COUNT + AVG grouped by category
-    # =====================================================================
-    op_name = "aggregation_group_by"
+    # OP4: Vector search + payload
+    op_name = "vector_search_payload"
     print(f"    {op_name}...")
 
     def ch_op4():
         return ch_client.query(
-            "SELECT category, count() AS cnt, avg(price) AS avg_price "
-            "FROM products GROUP BY category ORDER BY cnt DESC"
+            "SELECT id, category, price, rating FROM products ORDER BY price DESC LIMIT 100"
         ).result_rows
 
-    # VelesDB: manual aggregation over search results (no native GROUP BY via Python)
     def veles_op4():
-        # Fetch large result set, aggregate in Python
-        res = veles_col.search(vector=query_vec, top_k=TOP_K)
-        groups = {}
-        for r in res:
-            cat = r["payload"]["category"]
-            price = r["payload"]["price"]
-            if cat not in groups:
-                groups[cat] = {"cnt": 0, "sum_price": 0.0}
-            groups[cat]["cnt"] += 1
-            groups[cat]["sum_price"] += price
-        return [
-            (cat, g["cnt"], g["sum_price"] / g["cnt"] if g["cnt"] else 0)
-            for cat, g in sorted(groups.items(), key=lambda x: -x[1]["cnt"])
-        ]
+        res = veles.search(col_name, vector=query_vec, top_k=TOP_K)
+        return [(r["id"], r["payload"]["category"], r["payload"]["price"],
+                 r["payload"]["rating"]) for r in res]
 
     ch_m = measure(ch_op4)
     veles_m = measure(veles_op4)
     results["operations"][op_name] = {
-        "description": "GROUP BY category → count, avg(price) [CH: full table / VelesDB: top-K]",
+        "description": "Top-100 retrieval + 4-col projection",
         "clickhouse": {k: v for k, v in ch_m.items() if k != "result_sample"},
         "velesdb": {k: v for k, v in veles_m.items() if k != "result_sample"},
-        "note": "Not directly comparable: CH aggregates full table, VelesDB aggregates top-K results",
-    }
-
-    # =====================================================================
-    # OP5: Pure vector search + payload access (VelesDB advantage)
-    # =====================================================================
-    op_name = "vector_search_payload"
-    print(f"    {op_name}...")
-
-    def ch_op5():
-        # ClickHouse has no vector search — simulate with ORDER BY + LIMIT
-        return ch_client.query(
-            "SELECT id, category, price, rating FROM products ORDER BY price DESC LIMIT 100"
-        ).result_rows
-
-    def veles_op5():
-        res = veles_col.search(vector=query_vec, top_k=TOP_K)
-        return [
-            (r["id"], r["payload"]["category"], r["payload"]["price"], r["payload"]["rating"])
-            for r in res
-        ]
-
-    ch_m = measure(ch_op5)
-    veles_m = measure(veles_op5)
-    results["operations"][op_name] = {
-        "description": "Top-100 retrieval + 4-col projection [VelesDB: vector HNSW / CH: ORDER BY]",
-        "clickhouse": {k: v for k, v in ch_m.items() if k != "result_sample"},
-        "velesdb": {k: v for k, v in veles_m.items() if k != "result_sample"},
-        "note": "Different ranking strategies — shows retrieval + projection overhead",
+        "note": "Different ranking strategies",
     }
 
     return results
@@ -467,54 +290,34 @@ def run_benchmarks(n: int, ch_client, veles_col) -> dict:
 
 def print_results(all_results: list[dict], machine: dict):
     print("\n" + "=" * 78)
-    print("  VelesDB vs ClickHouse — Multi-column Benchmark Results")
+    print("  VelesDB vs ClickHouse — Multi-column Benchmark")
     print("=" * 78)
-    print(f"  CPU:     {machine['cpu']}")
-    print(f"  RAM:     {machine['ram']}")
-    print(f"  OS:      {machine['os']}")
-    print(f"  VelesDB: {machine['velesdb']}")
-    print(f"  Date:    {machine['date']}")
-    print(f"  Rounds:  {MEASURE_ROUNDS} (warmup: {WARMUP_ROUNDS})")
+    print(f"  Runtime:  All engines in Docker, accessed via HTTP")
+    print(f"  VelesDB:  {machine.get('velesdb', '?')}")
+    print(f"  CH:       {machine.get('clickhouse', '?')}")
+    print(f"  Rounds:   {MEASURE_ROUNDS} (warmup: {WARMUP_ROUNDS})")
     print("=" * 78)
 
     for res in all_results:
         n = res["dataset_size"]
         print(f"\n{'─' * 78}")
         print(f"  Dataset: {n:,} rows")
-        print(f"{'─' * 78}")
 
         for op_name, op_data in res["operations"].items():
-            print(f"\n  ▸ {op_name}")
-            print(f"    {op_data['description']}")
-
             ch = op_data["clickhouse"]
             vl = op_data["velesdb"]
-
-            # Ratio
             if ch["median"] > 0 and vl["median"] > 0:
                 ratio = ch["median"] / vl["median"]
-                if ratio > 1:
-                    winner = f"VelesDB {ratio:.1f}x faster"
-                else:
-                    winner = f"ClickHouse {1/ratio:.1f}x faster"
+                winner = f"VelesDB {ratio:.1f}x faster" if ratio > 1 else f"ClickHouse {1/ratio:.1f}x faster"
             else:
                 winner = "N/A"
 
-            header = f"    {'Engine':<14} {'Median':>12} {'P99':>12} {'Mean':>12} {'Min':>12}"
-            print(header)
-            print(f"    {'─' * 62}")
-            print(f"    {'ClickHouse':<14} {fmt_time(ch['median']):>12} {fmt_time(ch['p99']):>12} "
-                  f"{fmt_time(ch['mean']):>12} {fmt_time(ch['min']):>12}")
-            print(f"    {'VelesDB':<14} {fmt_time(vl['median']):>12} {fmt_time(vl['p99']):>12} "
-                  f"{fmt_time(vl['mean']):>12} {fmt_time(vl['min']):>12}")
+            print(f"\n  ▸ {op_name}: {op_data['description']}")
+            print(f"    {'Engine':<14} {'Median':>12} {'P99':>12} {'Mean':>12}")
+            print(f"    {'─' * 50}")
+            print(f"    {'ClickHouse':<14} {fmt_time(ch['median']):>12} {fmt_time(ch['p99']):>12} {fmt_time(ch['mean']):>12}")
+            print(f"    {'VelesDB':<14} {fmt_time(vl['median']):>12} {fmt_time(vl['p99']):>12} {fmt_time(vl['mean']):>12}")
             print(f"    → {winner}")
-
-            if "note" in op_data:
-                print(f"    ⚠ {op_data['note']}")
-
-            if "ch_result_count" in op_data:
-                print(f"    Results: CH={op_data['ch_result_count']}, "
-                      f"VelesDB={op_data['veles_result_count']}")
 
 
 # ---------------------------------------------------------------------------
@@ -526,13 +329,14 @@ def main():
     global MEASURE_ROUNDS, WARMUP_ROUNDS
 
     parser = argparse.ArgumentParser(description="VelesDB vs ClickHouse multi-column benchmark")
-    parser.add_argument("--datasets", type=int, nargs="+", default=DEFAULT_DATASETS,
-                        help="Dataset sizes to benchmark (default: 10000 100000)")
-    parser.add_argument("--json", action="store_true", help="Output results as JSON")
-    parser.add_argument("--rounds", type=int, default=100, help="Measurement rounds (default: 100)")
-    parser.add_argument("--warmup", type=int, default=10, help="Warmup rounds (default: 10)")
-    parser.add_argument("--ch-host", default=CLICKHOUSE_HOST, help="ClickHouse host")
-    parser.add_argument("--ch-port", type=int, default=CLICKHOUSE_PORT, help="ClickHouse HTTP port")
+    parser.add_argument("--datasets", type=int, nargs="+", default=DEFAULT_DATASETS)
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--rounds", type=int, default=100)
+    parser.add_argument("--warmup", type=int, default=10)
+    parser.add_argument("--velesdb-host", default="localhost")
+    parser.add_argument("--velesdb-port", type=int, default=8080)
+    parser.add_argument("--ch-host", default="localhost")
+    parser.add_argument("--ch-port", type=int, default=8123)
     args = parser.parse_args()
 
     MEASURE_ROUNDS = args.rounds
@@ -541,80 +345,51 @@ def main():
     print("VelesDB vs ClickHouse — Multi-column Benchmark")
     print("=" * 50)
 
-    # Machine info
-    machine = get_machine_info()
-    print(f"  CPU: {machine['cpu']}")
-    print(f"  RAM: {machine['ram']}")
+    # Connect to VelesDB
+    veles = VelesDBClient(host=args.velesdb_host, port=args.velesdb_port)
+    try:
+        info = veles.health()
+        machine = {"velesdb": info.get("version", "?")}
+        print(f"  VelesDB {machine['velesdb']} OK")
+    except Exception as e:
+        print(f"  ERROR VelesDB: {e}")
+        sys.exit(1)
 
     # Connect to ClickHouse
-    print("\n  Connecting to ClickHouse...")
     try:
-        ch_client = clickhouse_connect.get_client(
-            host=args.ch_host, port=args.ch_port, database="default"
-        )
-        ch_version = ch_client.command("SELECT version()")
-        print(f"  ClickHouse version: {ch_version}")
-        machine["clickhouse"] = str(ch_version)
+        ch_client = clickhouse_connect.get_client(host=args.ch_host, port=args.ch_port)
+        machine["clickhouse"] = str(ch_client.command("SELECT version()"))
+        print(f"  ClickHouse {machine['clickhouse']} OK")
     except Exception as e:
-        print(f"\n  ERROR: Cannot connect to ClickHouse at {args.ch_host}:{args.ch_port}")
-        print(f"  {e}")
-        print(f"\n  Make sure ClickHouse is running:")
-        print(f"    docker compose up -d")
+        print(f"  ERROR ClickHouse: {e}")
         sys.exit(1)
 
     all_results = []
-
     for n in args.datasets:
-        print(f"\n{'=' * 50}")
-        print(f"  Dataset: {n:,} rows")
-        print(f"{'=' * 50}")
-
-        # Generate data
-        print("  Generating dataset...")
+        print(f"\n  Dataset: {n:,} rows")
         rows = generate_dataset(n)
 
-        # Setup ClickHouse
         print("  Loading into ClickHouse...")
         t0 = time.perf_counter()
-        ch_count = setup_clickhouse(ch_client, rows)
-        ch_load_time = time.perf_counter() - t0
-        print(f"  ClickHouse: {ch_count:,} rows loaded in {ch_load_time:.2f}s")
+        setup_clickhouse(ch_client, rows)
+        ch_load = time.perf_counter() - t0
+        print(f"  ClickHouse: {ch_load:.2f}s")
 
-        # Setup VelesDB
-        db_path = os.path.join(os.environ.get("TEMP", "/tmp"), f"velesdb_bench_vs_{n}")
+        col_name = f"products_{n}"
         print("  Loading into VelesDB...")
         t0 = time.perf_counter()
-        veles_col = setup_velesdb(rows, db_path)
-        veles_load_time = time.perf_counter() - t0
-        print(f"  VelesDB: {n:,} points loaded in {veles_load_time:.2f}s")
+        setup_velesdb(veles, rows, col_name)
+        veles_load = time.perf_counter() - t0
+        print(f"  VelesDB: {veles_load:.2f}s")
 
-        # Run benchmarks
-        print("\n  Running benchmarks...")
-        results = run_benchmarks(n, ch_client, veles_col)
-        results["load_times"] = {
-            "clickhouse": ch_load_time,
-            "velesdb": veles_load_time,
-        }
+        results = run_benchmarks(n, ch_client, veles, col_name)
+        results["load_times"] = {"clickhouse": ch_load, "velesdb": veles_load}
         all_results.append(results)
 
-        # Cleanup VelesDB
-        del veles_col
-        if os.path.exists(db_path):
-            shutil.rmtree(db_path, ignore_errors=True)
+        veles.delete_collection(col_name)
 
-    # Output
     if args.json:
-        output = {
-            "machine": machine,
-            "config": {
-                "dimension": DIMENSION,
-                "top_k": TOP_K,
-                "warmup_rounds": WARMUP_ROUNDS,
-                "measure_rounds": MEASURE_ROUNDS,
-            },
-            "results": all_results,
-        }
-        print(json.dumps(output, indent=2, default=str))
+        print(json.dumps({"machine": machine, "results": all_results}, indent=2, default=str))
     else:
         print_results(all_results, machine)
 

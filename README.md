@@ -2,121 +2,89 @@
 
 Fair benchmark suite comparing [VelesDB](https://github.com/cyberlife-coder/VelesDB) (multi-model: vector + graph + columnar) against specialist databases on their home turf.
 
+## Fairness Guarantees
+
+- **All engines run in Docker** — same isolation, same overhead
+- All accessed via HTTP/network from the same Python process
+- Same dataset loaded into all engines
+- Same LIMIT on both sides (equal result volume)
+- Warmup rounds before measurement
+- p50/p99 latency reported
+
 ## Test Environment
 
 | Parameter | Value |
 |-----------|-------|
-| **Date** | April 5, 2026 |
 | **CPU** | Intel Core i9-14900KF (24 cores, 32 threads, AVX2) |
 | **RAM** | 64 GB DDR5 |
 | **OS** | Windows 11 Pro + WSL2 Ubuntu 24.04 |
 | **Storage** | NVMe SSD |
-| **VelesDB** | 1.12.0 (develop branch, all perf optimizations merged) |
-| **Qdrant** | 1.17.1 (Docker) |
-| **Memgraph** | 3.9.0 (Docker) |
-| **ClickHouse** | 26.3.2.3 (Docker) |
-| **Python** | 3.12 (WSL2 venv) |
-| **Rust** | 1.94.0 |
+| **Runtime** | All engines in Docker containers |
 
-## Fairness Guarantees
+### Engine Versions (pinned in docker-compose.yml)
 
-- Same dataset loaded into all engines
-- Same WSL2 environment, same Python process
-- Same LIMIT on both sides (equal result volume)
-- Result count verified (both engines return same number of results)
-- Warmup rounds before measurement
-- p50/p99 latency reported
-
----
-
-## Results (VelesDB 1.12.0 — April 5, 2026)
-
-### Vector Search (SIFT1M, 1M × 128D, Euclidean) — vs Qdrant
-
-| Metric | VelesDB | Qdrant | Ratio |
-|--------|---------|--------|-------|
-| **kNN@10 p50** | **411 µs** | 10.3 ms | VelesDB **25.1x faster** |
-| **kNN@100 p50** | **1.3 ms** | 8.8 ms | VelesDB **6.6x faster** |
-| **Insert 1M** | 22.1K vec/s | ~15.5K vec/s | VelesDB **1.4x faster** |
-
-#### Recall
-
-| Mode | Recall@10 | Recall@100 | Latency p50 |
-|------|-----------|------------|-------------|
-| VelesDB Fast | 0.992 | 0.994 | 2.0 ms |
-| VelesDB Balanced | 0.992 | 0.994 | 2.1 ms |
-| VelesDB Accurate | 0.992 | 0.994 | 2.2 ms |
-| Qdrant (default) | 0.998 | 0.996 | 10.3 ms |
-
-### Graph Traversal (5K nodes, 55K edges) — vs Memgraph
-
-| Query | VelesDB | Memgraph | Ratio | Results |
-|-------|---------|----------|-------|---------|
-| **BFS 1-hop** | **2 µs** | 423 µs | VelesDB **189x faster** | 10 = 10 |
-| **BFS 2-hop** | **22 µs** | 3.2 ms | VelesDB **146x faster** | 110 = 110 |
-| **BFS 3-hop** | **72 µs** | 2.1 ms | VelesDB **30x faster** | 200 = 200 |
-| **Multi-hop** | **27 µs** | 499 µs | VelesDB **18x faster** | 10 = 10 |
-| **Edge loading** | 1.03M edges/s | — | — | — |
-
-### Columnar Queries (1M rows, 24 columns) — vs ClickHouse
-
-*Measured on 1M-row real ClickBench dataset (Yandex.Metrica hits), 100 rounds, 20 warmup.*
-
-| Query | VelesDB | ClickHouse | Ratio |
-|-------|---------|------------|-------|
-| **Q20 UserID point lookup** | **17 µs** | 2.89 ms | VelesDB **173x faster** |
-| **Q21 URL LIKE '%google%'** | 35.8 ms | **8.9 ms** | ClickHouse **4.0x faster** |
-| **Q24 URL pattern + 6 cols** | 21.3 ms | **6.2 ms** | ClickHouse **3.5x faster** |
-| **Q37 CounterID=62 AND 3 predicates** | **32 µs** | 5.79 ms | VelesDB **181x faster** |
-| **Q38 CounterID=62 AND flags** | **42 µs** | 5.28 ms | VelesDB **125x faster** |
-| **Q39 CounterID=62 AND links** | **46 µs** | 5.28 ms | VelesDB **115x faster** |
-| **Q41 CounterID=62 AND traffic** | **32 µs** | 5.50 ms | VelesDB **170x faster** |
-| **AdvEngineID!=0 search** | **34 µs** | 6.78 ms | VelesDB **200x faster** |
-| **IsMobile=1 filter** | **22 µs** | 5.88 ms | VelesDB **270x faster** |
-
-### Improvement vs v1.11.0
-
-| Metric | v1.11.0 | v1.12.0 | Change |
-|--------|---------|---------|--------|
-| vs Qdrant kNN@10 | 19.7x faster | **25.1x faster** | +27% improved |
-| vs Qdrant kNN@100 | 3.6x faster | **6.6x faster** | +83% improved |
-| vs Qdrant insert | 1.2x faster | **1.4x faster** | +17% improved |
-| vs Memgraph BFS 1-hop | 189x faster | **189x faster** | Stable |
-| vs Memgraph BFS 2-hop | 97x faster | **146x faster** | +50% improved |
-| vs ClickHouse Q37 | Parity (est.) | **181x faster** | Real measurement (1M rows) |
-| vs ClickHouse Q20 | Parity (est.) | **173x faster** | Real measurement (1M rows) |
-| vs ClickHouse IsMobile | VelesDB faster (est.) | **270x faster** | Real measurement (1M rows) |
-
-### Historical Improvement (v1.10.0 → v1.12.0)
-
-| Metric | v1.10.0 | v1.12.0 | Change |
-|--------|---------|---------|--------|
-| vs Qdrant search | 17.7x faster | **25.1x faster** | Improved |
-| vs Qdrant insert | **23x slower** | **1.4x faster** | **Reversed** |
-| vs Memgraph BFS 1-hop | **100x slower** | **189x faster** | **Reversed** |
-| vs Memgraph BFS 3-hop | **25,000x slower** | **30x faster** | **Reversed** |
-| vs ClickHouse Q37 | **345x slower** | **181x faster** | **Reversed** |
-
----
+| Engine | Image |
+|--------|-------|
+| **VelesDB** | Built from source (velesdb-core/Dockerfile) |
+| **ClickHouse** | `clickhouse/clickhouse-server:24.12-alpine` |
+| **Qdrant** | `qdrant/qdrant:v1.13.2` |
+| **Memgraph** | `memgraph/memgraph:2.21.1` |
 
 ## Quick Start
 
 ```bash
-# Setup
-bash wsl_setup_venv.sh
+# 1. Setup (Python venv + Docker build + start all engines)
+bash setup.sh
 
-# Start competitors
-docker run -d --name bench-memgraph -p 7687:7687 memgraph/memgraph:latest
-docker run -d --name bench-qdrant -p 16333:6333 qdrant/qdrant:latest
-docker run -d --name bench-clickhouse -p 8123:8123 clickhouse/clickhouse-server:latest
+# 2. Activate venv
+source .venv/bin/activate
 
-# Run benchmarks
-source /tmp/bench-venv/bin/activate
-python3 bench_full_audit.py          # Vector + Graph (~5 min)
-python3 bench_graph_quick.py         # Graph only (~30s)
-python3 bench_vector.py --qdrant-port 16333  # Vector only (~3 min)
-python3 bench_clickbench.py --skip-ch-import  # Columnar (~15 min)
+# 3. Run benchmarks
+python3 bench_vector.py          # Vector search vs Qdrant (~5 min)
+python3 bench_graph.py           # Graph traversal vs Memgraph (~3 min)
+python3 bench_multicolumn.py     # Columnar queries vs ClickHouse (~2 min)
+python3 bench_clickbench.py      # ClickBench adapted vs ClickHouse (~15 min)
+python3 bench_hybrid.py          # Hybrid multi-paradigm (~5 min)
+python3 bench_full_audit.py      # Quick audit (vector + graph)
+
+# JSON output for CI/automation
+python3 bench_vector.py --json > results/vector.json
 ```
+
+### Manual Docker Management
+
+```bash
+# Start all engines
+docker compose up -d
+
+# Check health
+docker compose ps
+
+# Rebuild VelesDB after code changes
+docker compose build velesdb
+docker compose up -d velesdb
+
+# View logs
+docker compose logs velesdb
+docker compose logs clickhouse
+
+# Stop all
+docker compose down
+
+# Clean volumes (reset all data)
+docker compose down -v
+```
+
+## Benchmarks
+
+| Benchmark | VelesDB vs | What it measures |
+|-----------|-----------|------------------|
+| `bench_vector.py` | Qdrant | ANN search (SIFT1M), recall@k, QPS |
+| `bench_graph.py` | Memgraph | BFS/DFS traversal, pattern matching |
+| `bench_multicolumn.py` | ClickHouse | Multi-predicate filters, projections |
+| `bench_clickbench.py` | ClickHouse | Real ClickBench queries (1M rows) |
+| `bench_hybrid.py` | CH+Qdrant+igraph | Multi-paradigm hybrid queries |
+| `bench_full_audit.py` | All | Quick audit across all paradigms |
 
 ## License
 
