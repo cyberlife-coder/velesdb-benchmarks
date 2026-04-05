@@ -6,12 +6,12 @@ Fair benchmark suite comparing [VelesDB](https://github.com/cyberlife-coder/Vele
 
 | Parameter | Value |
 |-----------|-------|
-| **Date** | April 3, 2026 |
+| **Date** | April 5, 2026 |
 | **CPU** | Intel Core i9-14900KF (24 cores, 32 threads, AVX2) |
 | **RAM** | 64 GB DDR5 |
 | **OS** | Windows 11 Pro + WSL2 Ubuntu 24.04 |
 | **Storage** | NVMe SSD |
-| **VelesDB** | 1.11.0 (develop branch, all perf optimizations merged) |
+| **VelesDB** | 1.12.0 (develop branch, all perf optimizations merged) |
 | **Qdrant** | 1.17.1 (Docker) |
 | **Memgraph** | 3.9.0 (Docker) |
 | **ClickHouse** | 26.3.2.3 (Docker) |
@@ -29,57 +29,73 @@ Fair benchmark suite comparing [VelesDB](https://github.com/cyberlife-coder/Vele
 
 ---
 
-## Results (VelesDB 1.11.0 — April 3, 2026)
+## Results (VelesDB 1.12.0 — April 5, 2026)
 
 ### Vector Search (SIFT1M, 1M × 128D, Euclidean) — vs Qdrant
 
 | Metric | VelesDB | Qdrant | Ratio |
 |--------|---------|--------|-------|
-| **kNN@10 p50** | **348 µs** | 6.8 ms | VelesDB **19.7x faster** |
-| **kNN@100 p50** | **1.9 ms** | 6.9 ms | VelesDB **3.6x faster** |
-| **Insert 1M** | 19.0K vec/s | ~15.5K vec/s | VelesDB **1.2x faster** |
+| **kNN@10 p50** | **411 µs** | 10.3 ms | VelesDB **25.1x faster** |
+| **kNN@100 p50** | **1.3 ms** | 8.8 ms | VelesDB **6.6x faster** |
+| **Insert 1M** | 22.1K vec/s | ~15.5K vec/s | VelesDB **1.4x faster** |
 
 #### Recall
 
 | Mode | Recall@10 | Recall@100 | Latency p50 |
 |------|-----------|------------|-------------|
-| VelesDB Fast | 0.992 | 0.995 | 2.4 ms |
-| VelesDB Balanced | 0.992 | 0.995 | 2.2 ms |
-| VelesDB Accurate | 0.992 | 0.995 | 2.2 ms |
-| Qdrant (default) | 0.998 | 0.996 | 6.8 ms |
+| VelesDB Fast | 0.992 | 0.994 | 2.0 ms |
+| VelesDB Balanced | 0.992 | 0.994 | 2.1 ms |
+| VelesDB Accurate | 0.992 | 0.994 | 2.2 ms |
+| Qdrant (default) | 0.998 | 0.996 | 10.3 ms |
 
 ### Graph Traversal (5K nodes, 55K edges) — vs Memgraph
 
 | Query | VelesDB | Memgraph | Ratio | Results |
 |-------|---------|----------|-------|---------|
-| **BFS 1-hop** | **2 µs** | 441 µs | VelesDB **189x faster** | 10 = 10 |
-| **BFS 2-hop** | **23 µs** | 2.2 ms | VelesDB **97x faster** | 110 = 110 |
-| **BFS 3-hop** | **44 µs** | 2.2 ms | VelesDB **50x faster** | 200 = 200 |
-| **Multi-hop** | **27 µs** | 525 µs | VelesDB **19x faster** | 10 = 10 |
+| **BFS 1-hop** | **2 µs** | 423 µs | VelesDB **189x faster** | 10 = 10 |
+| **BFS 2-hop** | **22 µs** | 3.2 ms | VelesDB **146x faster** | 110 = 110 |
+| **BFS 3-hop** | **72 µs** | 2.1 ms | VelesDB **30x faster** | 200 = 200 |
+| **Multi-hop** | **27 µs** | 499 µs | VelesDB **18x faster** | 10 = 10 |
 | **Edge loading** | 1.03M edges/s | — | — | — |
 
-### Columnar Queries (100K rows, 24 columns) — vs ClickHouse
+### Columnar Queries (1M rows, 24 columns) — vs ClickHouse
 
-*Measured on 100K-point diagnostic dataset with secondary indexes.*
+*Measured on 1M-row real ClickBench dataset (Yandex.Metrica hits), 100 rounds, 20 warmup.*
 
-| Query | VelesDB | ClickHouse (est.) | Status |
-|-------|---------|-------------------|--------|
-| **CounterID=62 (indexed)** | **0.6 ms** | ~5 ms | VelesDB faster |
-| **CounterID=62 AND 3 predicates** | **1.6 ms** | ~5 ms | VelesDB faster |
-| **UserID = X (point lookup)** | **1.5 ms** | ~2.5 ms | Parity |
-| **IsMobile=1 (20% selectivity)** | **1.3 ms** | ~5 ms | VelesDB faster |
-| **AdvEngine != 0 (bitmap NEQ)** | **2.7 ms** | ~5.5 ms | Parity |
-| **URL LIKE '%google%' (BM25)** | **3.6 ms** | ~8 ms | Parity |
+| Query | VelesDB | ClickHouse | Ratio |
+|-------|---------|------------|-------|
+| **Q20 UserID point lookup** | **17 µs** | 2.89 ms | VelesDB **173x faster** |
+| **Q21 URL LIKE '%google%'** | 35.8 ms | **8.9 ms** | ClickHouse **4.0x faster** |
+| **Q24 URL pattern + 6 cols** | 21.3 ms | **6.2 ms** | ClickHouse **3.5x faster** |
+| **Q37 CounterID=62 AND 3 predicates** | **32 µs** | 5.79 ms | VelesDB **181x faster** |
+| **Q38 CounterID=62 AND flags** | **42 µs** | 5.28 ms | VelesDB **125x faster** |
+| **Q39 CounterID=62 AND links** | **46 µs** | 5.28 ms | VelesDB **115x faster** |
+| **Q41 CounterID=62 AND traffic** | **32 µs** | 5.50 ms | VelesDB **170x faster** |
+| **AdvEngineID!=0 search** | **34 µs** | 6.78 ms | VelesDB **200x faster** |
+| **IsMobile=1 filter** | **22 µs** | 5.88 ms | VelesDB **270x faster** |
 
-### Improvement vs v1.10.0
+### Improvement vs v1.11.0
 
-| Metric | v1.10.0 | v1.11.0 | Change |
+| Metric | v1.11.0 | v1.12.0 | Change |
 |--------|---------|---------|--------|
-| vs Qdrant search | 17.7x faster | **19.7x faster** | Improved |
-| vs Qdrant insert | **23x slower** | **1.2x faster** | **Reversed** |
+| vs Qdrant kNN@10 | 19.7x faster | **25.1x faster** | +27% improved |
+| vs Qdrant kNN@100 | 3.6x faster | **6.6x faster** | +83% improved |
+| vs Qdrant insert | 1.2x faster | **1.4x faster** | +17% improved |
+| vs Memgraph BFS 1-hop | 189x faster | **189x faster** | Stable |
+| vs Memgraph BFS 2-hop | 97x faster | **146x faster** | +50% improved |
+| vs ClickHouse Q37 | Parity (est.) | **181x faster** | Real measurement (1M rows) |
+| vs ClickHouse Q20 | Parity (est.) | **173x faster** | Real measurement (1M rows) |
+| vs ClickHouse IsMobile | VelesDB faster (est.) | **270x faster** | Real measurement (1M rows) |
+
+### Historical Improvement (v1.10.0 → v1.12.0)
+
+| Metric | v1.10.0 | v1.12.0 | Change |
+|--------|---------|---------|--------|
+| vs Qdrant search | 17.7x faster | **25.1x faster** | Improved |
+| vs Qdrant insert | **23x slower** | **1.4x faster** | **Reversed** |
 | vs Memgraph BFS 1-hop | **100x slower** | **189x faster** | **Reversed** |
-| vs Memgraph BFS 3-hop | **25,000x slower** | **50x faster** | **Reversed** |
-| vs ClickHouse Q37 | **345x slower** | **Parity** | **Reversed** |
+| vs Memgraph BFS 3-hop | **25,000x slower** | **30x faster** | **Reversed** |
+| vs ClickHouse Q37 | **345x slower** | **181x faster** | **Reversed** |
 
 ---
 
